@@ -1,113 +1,67 @@
+#!/usr/bin/python3
+
 import sys
 
-import cv2
-import mediapipe as mp
 import time
 import rospy
 import moveit_commander
 import geometry_msgs.msg
-import cv2
-from cv_bridge import CvBridge, CvBridgeError
 
-cap = cv2.VideoCapture(0)
+try:
+    from math import pi, tau, dist, fabs, cos
+except:  # For Python 2 compatibility
+    from math import pi, fabs, cos, sqrt
 
-mpHands = mp.solutions.hands
-hands = mpHands.Hands(static_image_mode=False,
-                      max_num_hands=2,
-                      min_detection_confidence=0.5,
-                      min_tracking_confidence=0.5)
-mpDraw = mp.solutions.drawing_utils
+    tau = 2.0 * pi
 
-pTime = 0
-cTime = 0
+    def dist(p, q):
+        return sqrt(sum((p_i - q_i) ** 2.0 for p_i, q_i in zip(p, q)))
 
 try:
     moveit_commander.roscpp_initialize(sys.argv)
+    rospy.init_node("ares_arm_ctrl_node")
     robot = moveit_commander.RobotCommander()
-    group_name = robot.get_group_names()[0]
+    group_name = "manipulator"# robot.get_group_names()[0]
     print(group_name)
     move_group = moveit_commander.MoveGroupCommander(group_name)
     scene = moveit_commander.PlanningSceneInterface()
-
+    move_group.set_goal_orientation_tolerance(1.0)
+    move_group.set_goal_position_tolerance(0.1)
+    move_group.set_goal_joint_tolerance(0.5)
+    move_group.set_planning_time(35.0)
     # Add the ground plane as collision object
     plane_pose = geometry_msgs.msg.PoseStamped()
     plane_pose.header.frame_id = "world"
     plane_pose.pose.orientation.w = 1.0
-    scene.add_plane("ground_plane", plane_pose)
+    print(move_group.get_current_pose())
+    #move_group.set_max_acceleration_scaling_factor(1)
+    #move_group.set_max_velocity_scaling_factor(1)
 
-    move_group.set_max_acceleration_scaling_factor(1)
-    move_group.set_max_velocity_scaling_factor(1)
+    #joint_goal = move_group.get_current_joint_values()
+    #joint_goal[0] = 0
+    #joint_goal[1] = tau / 12
+    #joint_goal[2] = tau / 12
+    #joint_goal[3] = tau / 12
 
-    target_joint_states = [
-        [1.207, -1.731, 1.205, -1.642, -1.355, -0.295],
-        [2.261, -1.088, 0.997, -1.732, -2.251, 0.601],
-        [0.628, -1.073, 1.032, -1.471, -0.870, -1.136],
-        [1.458, -1.341, 2.492, -3.641, -1.558, -0.044],
-        [1.458, -0.720, 0.531, -1.635, -1.559, -0.043],
-    ]
+    # The go command can be called with joint values, poses, or without any
+    # parameters if you have already set the pose or joint target for the group
+    #move_group.go(joint_goal, wait=True)
+    pose_goal = geometry_msgs.msg.Pose()
+    pose_goal.orientation.w = 1.0
+    pose_goal.position.x = 0.3
+    pose_goal.position.y = -0.04
+    pose_goal.position.z = -0.7
 
-    ki = 0
-    while True:
-        success, img = cap.read()
-        img = cv2.flip(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), 1)
-        imgRGB = img
-        results = hands.process(imgRGB)
-        # print(results.multi_hand_landmarks)
+    move_group.set_pose_target(pose_goal)
 
-        mx = -1
-        my = -1
-        tx = -1
-        ty = -1
-        nx = -1
-        ny = -1
-        kx = -1
-        ky = -1
-
-        if results.multi_hand_landmarks:
-            for handLms in results.multi_hand_landmarks:
-                for id, lm in enumerate(handLms.landmark):
-                    print(id, lm)
-                    h, w, c = img.shape
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    if id == 4:
-                        tx = cx
-                        ty = cy
-                    if id == 12:
-                        mx = cx
-                        my = cy
-                    if id == 1:
-                        nx = cx
-                        ny = cy
-                    if id == 17:
-                        kx = cx
-                        ky = cy
-
-                    # if id ==0:
-                    cv2.putText(img, str(id), (cx, cy), cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 255), 3)
-                    cv2.circle(img, (cx, cy), 3, (255, 0, 255), cv2.FILLED)
-
-                mpDraw.draw_landmarks(img, handLms, mpHands.HAND_CONNECTIONS)
-        cTime = time.time()
-        fps = 1 / (cTime - pTime)
-        pTime = cTime
-
-        cv2.putText(img, str(int(fps)), (10, 70), cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 255), 3)
-
-        if nx != kx:
-            dist = int((abs(mx - tx) + abs(my - ty)) / (abs(nx - kx) + abs(ny - ky)) * 100)
-            if dist < 80:
-                print(ki)
-                success = False
-                move_group.set_joint_value_target(target_joint_states[ki])
-                success, trajectory, planning_time, error_code = move_group.plan()
-                move_group.execute(trajectory, wait=False)
-                ki = ki + 1
-                ki = (ki + 1) % 5
+    # `go()` returns a boolean indicating whether the planning and execution was successful.
+    success = move_group.go(wait=True)
+    # Calling `stop()` ensures that there is no residual movement
+    move_group.stop()
+    # It is always good to clear your targets after planning with poses.
+    # Note: there is no equivalent function for clear_joint_value_targets().
+    move_group.clear_pose_targets()
 
 
-
-        cv2.imshow("Image", img)
-        cv2.waitKey(1)
 except KeyboardInterrupt:
-    cap.release()
     sys.exit(0)
